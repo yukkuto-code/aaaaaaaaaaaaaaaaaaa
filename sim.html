@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <!--
+    CSP の要点は connect-src 'none'。
+    このページはネットワークへ一切接続できない（fetch/XHR/WebSocket/送信フォームすべて不可）。
+    「モデル計算だけで、1 バイトも送らない」をブラウザ側で強制している。
+  -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>DDoS シミュレーター（実通信なし）</title>
+  <link rel="stylesheet" href="./sim.css">
+</head>
+
+<body>
+  <a class="skip" href="#main">本文へ</a>
+
+  <header class="hero">
+    <div class="wrap">
+      <a class="back" href="./index.html">← 負荷テスト・サンドボックスに戻る</a>
+      <h1>DDoS シミュレーター（実通信なし）</h1>
+      <p>
+        ボット数・レート・防御策を動かすと、サーバーがどこで崩れるかをその場で計算します。
+        ブラウザ内の数値モデルだけで、外部への送信は 0 件です。
+      </p>
+    </div>
+  </header>
+
+  <main id="main" class="wrap">
+
+    <section class="notice" role="note">
+      <h2>このページは通信しません</h2>
+      <p>
+        対象 URL の入力欄はありません。攻撃の宛先を指定する手段そのものを置いていません。
+        CSP も <code>connect-src 'none'</code> にしてあるため、スクリプトが書き換えられても外部へは接続できません。
+      </p>
+      <p>
+        ここで動くのは「1 秒あたり何件届いて、何件処理できるか」を追うだけの計算です。
+        実際の攻撃の再現・代行はできません。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>前提をまとめて切り替える<span class="sub">スライダーは個別に動かせます</span></h2>
+      <div class="presets">
+        <button type="button" class="btn" data-preset="small">小規模（1,000 台）</button>
+        <button type="button" class="btn" data-preset="mid">中規模（10,000 台）</button>
+        <button type="button" class="btn primary" data-preset="large">大規模（100,000 台）</button>
+        <button type="button" class="btn" data-preset="defended">大規模＋対策あり</button>
+      </div>
+    </section>
+
+    <div class="split">
+      <section class="card">
+        <h2>攻撃側</h2>
+
+        <div class="field">
+          <label for="botsRange">ボット数<span class="val" id="botsVal"></span></label>
+          <input type="range" id="botsRange">
+          <span class="hint">同時に要求を送る端末の数。ボットネットの規模。</span>
+        </div>
+
+        <div class="field">
+          <label for="rateRange">1 台あたりのレート<span class="val" id="rateVal"></span></label>
+          <input type="range" id="rateRange">
+          <span class="hint">端末 1 台が毎秒何件送るか。総量は 台数 × この値。</span>
+        </div>
+
+        <div class="field">
+          <label for="sizeRange">リクエストサイズ<span class="val" id="sizeVal"></span></label>
+          <input type="range" id="sizeRange">
+          <span class="hint">大きいほど回線（帯域）が先に詰まる。ヘッダ等として +620 B を加算。</span>
+        </div>
+
+        <div class="field">
+          <label for="rampRange">立ち上がり<span class="val" id="rampVal"></span></label>
+          <input type="range" id="rampRange">
+          <span class="hint">ボットが参加しきるまでの時間。0 なら開始と同時に最大。</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>防御側</h2>
+
+        <div class="field">
+          <label for="capRange">サーバー処理能力<span class="val" id="capVal"></span></label>
+          <input type="range" id="capRange">
+          <span class="hint">1 拠点が 1 秒に返せる応答数。ここを超えた分は待ち行列に積まれる。</span>
+        </div>
+
+        <div class="field">
+          <label for="linkRange">回線帯域<span class="val" id="linkVal"></span></label>
+          <input type="range" id="linkRange">
+          <span class="hint">1 拠点あたりの上り／下り。溢れたパケットはサーバーに届く前に落ちる。</span>
+        </div>
+
+        <div class="field">
+          <label for="ipLimitRange">IP あたりレート制限<span class="val" id="ipLimitVal"></span></label>
+          <input type="range" id="ipLimitRange">
+          <span class="hint">1 つの送信元 IP が許される毎秒件数。分散型には効きにくい。</span>
+        </div>
+
+        <div class="field">
+          <label for="scrubRange">スクラビング除去率<span class="val" id="scrubVal"></span></label>
+          <input type="range" id="scrubRange">
+          <span class="hint">上流で攻撃トラフィックを捨てる割合。正常な通信の 0.5 % は誤って捨てる想定。</span>
+        </div>
+
+        <div class="field">
+          <label for="nodesRange">anycast 拠点数<span class="val" id="nodesVal"></span></label>
+          <input type="range" id="nodesRange">
+          <span class="hint">同じ IP を複数拠点で受ける。処理能力と帯域が拠点数だけ増える。</span>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>結果<span class="sub">120 秒ぶんを 1 秒刻みで計算</span></h2>
+
+      <div class="stats">
+        <div class="stat" id="statRaw">
+          <span class="k">攻撃の総量</span>
+          <span class="v" id="rawView">-</span>
+        </div>
+        <div class="stat" id="statIn">
+          <span class="k">サーバーに届いた量</span>
+          <span class="v" id="inView">-</span>
+        </div>
+        <div class="stat" id="statServed">
+          <span class="k">処理できた量</span>
+          <span class="v" id="servedView">-</span>
+        </div>
+        <div class="stat" id="statDrop">
+          <span class="k">処理できなかった割合</span>
+          <span class="v" id="dropView">-</span>
+        </div>
+        <div class="stat" id="statAvail">
+          <span class="k">可用性（利用者の成功率）</span>
+          <span class="v" id="availView">-</span>
+        </div>
+        <div class="stat" id="statP95">
+          <span class="k">p95 応答時間</span>
+          <span class="v" id="p95View">-</span>
+        </div>
+      </div>
+
+      <div class="verdict" id="verdict">
+        <strong id="verdictTitle">-</strong>
+        <p id="verdictBody">-</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>流量の推移</h2>
+      <div class="chart">
+        <canvas id="flowChart" height="220" aria-label="攻撃流量と処理量の推移グラフ" role="img"></canvas>
+      </div>
+      <ul class="legend">
+        <li><span class="swatch s-raw"></span>攻撃の総量</li>
+        <li><span class="swatch s-in"></span>サーバーに届いた量</li>
+        <li><span class="swatch s-served"></span>処理できた量</li>
+        <li><span class="swatch s-band"></span>処理能力（帯の高さ・拠点合計）</li>
+      </ul>
+      <p class="hint">
+        縦軸は対数（1 → 10 → 100 …）。桁が違う量を同じ枠で読むため。薄い青の帯の上端が処理能力で、緑の線がそこに張り付いていれば「能力ちょうどで頭打ち」、オレンジと緑が重なっていれば「届いた分をそのまま処理できている」状態です。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>利用者の体感</h2>
+      <div class="chart">
+        <canvas id="qualChart" height="220" aria-label="可用性と応答時間の推移グラフ" role="img"></canvas>
+      </div>
+      <ul class="legend">
+        <li><span class="swatch s-served"></span>可用性（左軸・%）</li>
+        <li><span class="swatch s-p95"></span>p95 応答時間（右軸・ms）</li>
+        <li><span class="swatch s-threshold"></span>90 % のしきい線</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>どこで減ったか<span class="sub">定常時（最後の 30 秒平均）</span></h2>
+      <table class="readout">
+        <thead>
+          <tr>
+            <th>段階</th>
+            <th>毎秒</th>
+            <th>攻撃総量に対して</th>
+          </tr>
+        </thead>
+        <tbody id="funnelBody"></tbody>
+      </table>
+      <p class="hint">
+        「回線上限」で減るのは帯域が詰まった分、「サーバー処理」で減るのは CPU と待ち行列の分です。
+        どこが最初に詰まるかで、必要な対策が変わります。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>このモデルの限界</h2>
+      <ul class="notes">
+        <li>全体を 1 本の待ち行列として扱う粗いモデルです。プロトコル別の挙動（SYN flood、Slowloris、HTTP/2 の stream 枯渇など）は区別しません。</li>
+        <li>遅延は利用率から経験式で出しています。実機の p95 とは一致しません。桁と傾向を読むためのものです。</li>
+        <li>CDN・WAF の挙動、TCP 再送、BGP の経路変更は入れていません。anycast は「能力が拠点数倍になる」と単純化しています。</li>
+        <li>数字を実測値として引用しないでください。実機の耐性は、許可を得た環境で段階的に測るのが確実です。</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="foot wrap">
+    このページは計算のみで、外部への通信は行いません。第三者への負荷送信は不正アクセス禁止法や各国法令に触れます。
+  </footer>
+
+  <script src="./sim.js"></script>
+</body>
+
+</html>
